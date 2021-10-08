@@ -66,6 +66,44 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         init();
 
+
+        runnable = new Runnable() {
+            @Override
+            public void run() {
+
+                try {
+                    //请求token
+                    String tokenResult = HttpRequest.getToken(Constant.tokenURL);
+                    //拿到token
+                    String token = HttpRequest.processJSONForToken(tokenResult);
+                    //封装成一个类
+                    Info infoClass = new Info(HttpRequest.trimSpaceTag(GetBase64.encodeBase64File(Constant.fileName)),
+                            HttpRequest.getFileLen(Constant.fileName),token);
+//                    //请求info
+                    String infoResult = null;
+                    infoResult = HttpRequest.getResult(Constant.infoURL,infoClass);
+                    //处理result的json
+                    String result = HttpRequest.processJSONForResult(infoResult);
+                    //显示结果
+//                    display.setText(result);
+                    Message msg = handler.obtainMessage();//创建消息对象
+                    //将音乐的总时长和播放进度封装至消息对象中
+                    Bundle bundle = new Bundle();
+                    bundle.putString("result",result);
+                    msg.setData(bundle);
+                    //将消息发送到主线程的消息队列
+                    handler.sendMessage(msg);
+
+                } catch (HttpRetryException e){
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (Exception e){
+                    e.printStackTrace();
+                }
+            }
+        };
+
     }
 
     @Override
@@ -96,34 +134,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         playOrPause.setOnClickListener(this);
         record.setOnClickListener(this);
 
-        runnable = new Runnable() {
-            @Override
-            public void run() {
 
-                try {
-                    //请求token
-                    String tokenResult = HttpRequest.getToken(Constant.tokenURL);
-                    //拿到token
-                    String token = HttpRequest.processJSONForToken(tokenResult);
-                    //封装成一个类
-                    Info infoClass = new Info(HttpRequest.trimSpaceTag(GetBase64.encodeBase64File(Constant.fileName)),
-                            HttpRequest.getFileLen(Constant.fileName),token);
-//                    //请求info
-                    String infoResult = null;
-                    infoResult = HttpRequest.getResult(Constant.infoURL,infoClass);
-                    //处理result的json
-                    String result = HttpRequest.processJSONForResult(infoResult);
-                    //显示结果
-                    display.setText(result);
-                } catch (HttpRetryException e){
-                    e.printStackTrace();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                } catch (Exception e){
-                    e.printStackTrace();
-                }
-            }
-        };
 
         //开启服务
         Intent intent = new Intent(MainActivity.this,AudioService.class);
@@ -155,6 +166,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 Bundle bundle = msg.getData();//获取从子线程发送过来的音乐播放进度
                 int duration = bundle.getInt("duration");
                 int currentPosition = bundle.getInt("currentPosition");
+                display.setText(bundle.getString("result"));
                 seekBar.setMax(duration);
                 seekBar.setProgress(currentPosition);
                 //歌曲总时长

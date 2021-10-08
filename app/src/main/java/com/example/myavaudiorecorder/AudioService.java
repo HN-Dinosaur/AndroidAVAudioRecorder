@@ -22,7 +22,6 @@ public class AudioService extends Service {
     public AudioService() {}
     @Override
     public  IBinder onBind(Intent intent){
-        Log.v(LOG_TAG,"onBind");
         return new RecordControl();
     }
     @Override
