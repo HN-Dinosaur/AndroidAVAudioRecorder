@@ -1,18 +1,23 @@
 package com.example.myavaudiorecorder;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
-import android.content.Context;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
-import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 
 
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Message;
 import android.util.Log;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.LinearLayout;
+import android.widget.Button;
+import android.widget.ImageButton;
+import android.widget.SeekBar;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -21,27 +26,30 @@ import androidx.core.app.ActivityCompat;
 
 import com.example.myavaudiorecorder.Model.Constant;
 import com.example.myavaudiorecorder.Model.Info;
-import com.example.myavaudiorecorder.ViewCotroller.GetBase64;
-import com.example.myavaudiorecorder.ViewCotroller.HttpRequest;
+import com.example.myavaudiorecorder.Model.GetBase64;
+import com.example.myavaudiorecorder.Model.HttpRequest;
 
 import java.io.IOException;
 import java.net.HttpRetryException;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
     private static final String LOG_TAG = "AudioRecordTest";
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
-    private static String fileName = null;
 
-    private RecordButton recordButton = null;
     private MediaRecorder recorder = null;
 
-    private PlayButton   playButton = null;
-    private MediaPlayer   player = null;
-
-    private MyText myText = null;
-
     Runnable runnable = null;
+    public static Handler handler;
+    ImageButton playOrPause;
+    SeekBar seekBar;
+    TextView time,display;
+    Button record;
+
+    Boolean mStartRecording = true;
+
+    AudioService.RecordControl recordControl;
+    private MyServiceConn myServiceConn;
 
     // Requesting permission to RECORD_AUDIO
     private boolean permissionToRecordAccepted = false;
@@ -52,14 +60,41 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
+        setContentView(R.layout.activity_main);
+        //文件位置
+        Constant.fileName = getExternalCacheDir().getAbsolutePath() + "/audiorecordtest.m4a";
 
-        //录音文件地址
-        fileName = getExternalCacheDir().getAbsolutePath();
-        fileName += "/audiorecordtest.m4a";
-        //页面布局
-        settingLayout();
+        init();
 
+    }
 
+    @Override
+    public void onPointerCaptureChanged(boolean hasCapture) {
+
+    }
+
+    class MyServiceConn implements ServiceConnection {//用于实现连接服务
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service){
+
+            recordControl = (AudioService.RecordControl) service;
+        }
+        @Override
+        public void onServiceDisconnected(ComponentName name){
+
+        }
+    }
+
+    public void init(){
+        ActivityCompat.requestPermissions(this, permissions, REQUEST_RECORD_AUDIO_PERMISSION);
+        record = findViewById(R.id.record);
+        display = findViewById(R.id.display);
+        seekBar = findViewById(R.id.seekbar);
+        playOrPause = findViewById(R.id.playOrPause);
+        time = findViewById(R.id.time);
+
+        playOrPause.setOnClickListener(this);
+        record.setOnClickListener(this);
 
         runnable = new Runnable() {
             @Override
@@ -71,14 +106,15 @@ public class MainActivity extends AppCompatActivity {
                     //拿到token
                     String token = HttpRequest.processJSONForToken(tokenResult);
                     //封装成一个类
-                    Info infoClass = new Info(HttpRequest.trimSpaceTag(GetBase64.encodeBase64File(fileName)),
-                            HttpRequest.getFileLen(fileName),token);
+                    Info infoClass = new Info(HttpRequest.trimSpaceTag(GetBase64.encodeBase64File(Constant.fileName)),
+                            HttpRequest.getFileLen(Constant.fileName),token);
 //                    //请求info
                     String infoResult = null;
                     infoResult = HttpRequest.getResult(Constant.infoURL,infoClass);
                     //处理result的json
                     String result = HttpRequest.processJSONForResult(infoResult);
-                    myText.setText(result);
+                    //显示结果
+                    display.setText(result);
                 } catch (HttpRetryException e){
                     e.printStackTrace();
                 } catch (IOException e) {
@@ -89,8 +125,71 @@ public class MainActivity extends AppCompatActivity {
             }
         };
 
+        //开启服务
+        Intent intent = new Intent(MainActivity.this,AudioService.class);
+        myServiceConn = new MyServiceConn();
+        bindService(intent, myServiceConn, BIND_AUTO_CREATE);
 
 
+
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            //进度条改变调用该回调
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int process, boolean b) { }
+            //进度条开始
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) { }
+            //进度条停止
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                int progress = seekBar.getProgress();//获取seekBar的进度
+                recordControl.seekTo(progress);//改变播放进度
+            }
+        });
+
+        handler = new Handler(){
+            @Override
+            public void handleMessage(@NonNull Message msg) {
+                super.handleMessage(msg);
+
+                Bundle bundle = msg.getData();//获取从子线程发送过来的音乐播放进度
+                int duration = bundle.getInt("duration");
+                int currentPosition = bundle.getInt("currentPosition");
+                seekBar.setMax(duration);
+                seekBar.setProgress(currentPosition);
+                //歌曲总时长
+                int minute = duration / 1000 / 60;
+                int second = duration / 1000 % 60;
+                String totalMinute = null;
+                String totalSecond = null;
+                String currMinute = null;
+                String currSecond = null;
+                if(minute < 10){//如果歌曲的时间中的分钟小于10
+                    totalMinute = "0" + minute;//在分钟的前面加一个0
+                }else{
+                    totalMinute = minute+"";
+                }
+                if (second < 10){//如果歌曲中的秒钟小于10
+                    totalSecond="0" + second;//在秒钟前面加一个0
+                }else{
+                    totalSecond=second+"";
+                }
+                //歌曲当前播放时长
+                minute = currentPosition / 1000 / 60;
+                second = currentPosition / 1000 % 60;
+                if(minute<10){//如果歌曲的时间中的分钟小于10
+                    currMinute = "0" + minute;//在分钟的前面加一个0
+                }else{
+                    currMinute = minute+" ";
+                }
+                if (second<10){//如果歌曲中的秒钟小于10
+                    currSecond = "0" + second;//在秒钟前面加一个0
+                }else{
+                    currSecond = second+" ";
+                }
+                time.setText(currMinute + ":" + currSecond + "/" + totalMinute + ":" + totalSecond);
+            }
+        };
     }
     //权限
     @Override
@@ -101,8 +200,44 @@ public class MainActivity extends AppCompatActivity {
                 permissionToRecordAccepted  = grantResults[0] == PackageManager.PERMISSION_GRANTED;
                 break;
         }
-        if (!permissionToRecordAccepted ) finish();
+        if (!permissionToRecordAccepted )
+//            finish();
+            display.setText("前往设置给予权限才可以使用录音识别功能");
+    }
 
+    @Override
+    public void onClick(View view) {
+
+        switch (view.getId()){
+            case R.id.playOrPause:
+                //是否点击了录音按钮
+                if(!Constant.isHaveRecordSource){
+                    display.setText("请先点击录音按钮后再点击播放按钮");
+                }else{
+                    //是否是第一次点击播放
+                    if(Constant.isFirstClickPlayer){
+                        recordControl.play();
+                    }else{
+                        if (recordControl.isPlay()){
+                            playOrPause.setImageResource(R.mipmap.play);
+                            recordControl.pausePlay();
+                        }else{
+                            playOrPause.setImageResource(R.mipmap.pause);
+                            recordControl.continuePlay();
+                        }
+                    }
+                }
+                break;
+            case R.id.record:
+                onRecord(mStartRecording);
+                if (mStartRecording) {
+                    record.setText("停止录音");
+                } else {
+                    record.setText("点击开始录音");
+                }
+                mStartRecording = !mStartRecording;
+                break;
+        }
     }
 
 
@@ -113,41 +248,12 @@ public class MainActivity extends AppCompatActivity {
             stopRecording();
         }
     }
-
-    private void onPlay(boolean start) {
-        if (start) {
-            startPlaying();
-        } else {
-            stopPlaying();
-
-        }
-    }
-    //开始播放
-    private void startPlaying() {
-        player = new MediaPlayer();
-        try {
-            player.setDataSource(fileName);
-            player.prepare();
-            player.start();
-        } catch (IOException e) {
-            Log.e(LOG_TAG, "prepare() failed");
-        }
-    }
-    //停止播放
-    private void stopPlaying() {
-        player.release();
-        player = null;
-
-    }
     //开始录音
     private void startRecording() {
         recorder = new MediaRecorder();
         recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-//        recorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
-//        recorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
         recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-        recorder.setOutputFile(fileName);
-//        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+        recorder.setOutputFile(Constant.fileName);
         recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
         recorder.setAudioChannels(1);
         recorder.setAudioSamplingRate(16000);
@@ -157,7 +263,6 @@ public class MainActivity extends AppCompatActivity {
         } catch (IOException e) {
             Log.e(LOG_TAG, "prepare() failed");
         }
-
         recorder.start();
     }
     //停止录音
@@ -165,98 +270,12 @@ public class MainActivity extends AppCompatActivity {
         recorder.stop();
         recorder.release();
         recorder = null;
-        myText.setText("请稍等,正在识别");
+        Constant.isHaveRecordSource = true;
+        Constant.isFirstClickPlayer = true;
+        display.setText("请稍等,正在识别");
         //开始语音识别
         Thread thread = new Thread(runnable);
         thread.start();
-    }
-
-
-
-
-
-    //界面布局
-    @SuppressLint("WrongConstant")
-    public void settingLayout(){
-        ActivityCompat.requestPermissions(this, permissions, REQUEST_RECORD_AUDIO_PERMISSION);
-
-        LinearLayout ll = new LinearLayout(this);
-        ll.setOrientation(1);
-        ll.setPadding(10,10,10,10);
-        recordButton = new RecordButton(this);
-        ll.addView(recordButton,
-                new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        0));
-        playButton = new PlayButton(this);
-        ll.addView(playButton,
-                new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        0));
-        myText = new MyText(this);
-        myText.setText("请点击Start录音");
-//        myText.setBackgroundColor(Color.BLACK);
-        myText.setHeight(1800);
-        myText.setWidth(1600);
-        ll.addView(myText, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                0));
-        setContentView(ll);
-    }
-
-
-
-    class MyText extends androidx.appcompat.widget.AppCompatTextView{
-
-        public MyText(@NonNull Context context) {
-            super(context);
-        }
-    }
-    class RecordButton extends androidx.appcompat.widget.AppCompatButton {
-        boolean mStartRecording = true;
-
-        OnClickListener clicker = new OnClickListener() {
-            public void onClick(View v) {
-                onRecord(mStartRecording);
-                if (mStartRecording) {
-                    setText("Stop recording");
-                } else {
-                    setText("Start recording");
-                }
-                mStartRecording = !mStartRecording;
-            }
-        };
-
-        public RecordButton(Context ctx) {
-            super(ctx);
-            setText("Start recording");
-            setOnClickListener(clicker);
-        }
-    }
-
-    class PlayButton extends androidx.appcompat.widget.AppCompatButton {
-        boolean mStartPlaying = true;
-
-        OnClickListener clicker = new OnClickListener() {
-            public void onClick(View v) {
-                onPlay(mStartPlaying);
-                if (mStartPlaying) {
-                    setText("Stop playing");
-                } else {
-                    setText("Start playing");
-                }
-                mStartPlaying = !mStartPlaying;
-            }
-        };
-
-        public PlayButton(Context ctx) {
-            super(ctx);
-            setText("Start playing");
-            setOnClickListener(clicker);
-        }
     }
 
     @Override
@@ -266,12 +285,6 @@ public class MainActivity extends AppCompatActivity {
             recorder.release();
             recorder = null;
         }
-
-        if (player != null) {
-            player.release();
-            player = null;
-        }
-
 
     }
 }

@@ -1,4 +1,4 @@
-package com.example.myavaudiorecorder.ViewCotroller;
+package com.example.myavaudiorecorder.Model;
 
 
 import android.util.Log;

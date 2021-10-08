@@ -8,4 +8,7 @@ public class Constant {
     public final static String header = "application/json";
     public final static String infoURL = "http://vop.baidu.com/server_api";
     public final static String format = "m4a";
+    public static String fileName = "";
+    public static Boolean isHaveRecordSource = false;
+    public static Boolean isFirstClickPlayer = true;
 }
